@@ -437,7 +437,20 @@ def run_viewer(telemetry: pd.DataFrame, session):
             current_lap = 0
         current_status_idx = np.searchsorted(status_times, sim_time, side='right') - 1
         current_status = status_codes[current_status_idx] if current_status_idx >= 0 and current_status_idx < len(status_codes) else '1'
-        safety_str = "Safety Car Deployed" if current_status == '7' else "Green Flag"
+        if current_status == '3':
+            safety_str = "Safety Car Deployed"
+        elif current_status == '7':
+            safety_str = "VSC Deployed"
+        elif current_status == '2':
+            safety_str = "Safety Car Reported"
+        elif current_status == '5':
+            safety_str = "Yellow Flag"
+        elif current_status == '4':
+            safety_str = "Red Flag"
+        elif current_status == '6' or current_status == '8':
+            safety_str = "Safety Car Ending"
+        else:
+            safety_str = "Green Flag"
         message_idx = np.searchsorted(message_times, sim_time, side='right') - 1
         last_msg = str(messages[message_idx]) if message_idx >= 0 and message_idx < len(messages) else ""
         if len(last_msg) > 40:
@@ -601,9 +614,8 @@ class F1Selector(tk.Tk):
         self.progress_var = tk.StringVar(value="Initializing...")
         self.progress_label = tk.Label(self.loading_window, textvariable=self.progress_var, font=("Arial", 10))
         self.progress_label.pack()
-        self.progress_bar = ttk.Progressbar(self.loading_window, mode="indeterminate", length=300)
+        self.progress_bar = ttk.Progressbar(self.loading_window, mode="determinate", length=300, maximum=100)
         self.progress_bar.pack(pady=10)
-        self.progress_bar.start()
 
         # Make loading window modal
         self.loading_window.grab_set()
@@ -615,18 +627,18 @@ class F1Selector(tk.Tk):
 
     def load_data(self, name, rnd, year, sess):
         try:
-            self.update_progress("Setting up cache...")
+            self.update_progress("Setting up cache...", progress=10)
             cache = "ff1_cache"
             os.makedirs(cache, exist_ok=True)
             ff1.Cache.enable_cache(cache)
 
-            self.update_progress(f"Loading session: {year} {name} {sess}...")
+            self.update_progress(f"Loading session: {year} {name} {sess}...", progress=20)
             session = ff1.get_session(year, rnd, sess)
 
-            self.update_progress("Loading telemetry data...")
+            self.update_progress("Loading telemetry data...", progress=60)
             session.load(telemetry=True, weather=False, messages=True)
 
-            self.update_progress("Processing telemetry...")
+            self.update_progress("Processing telemetry...", progress=100)
             telemetry = collect_session_telemetry(session)
 
             if telemetry is None:
@@ -639,12 +651,13 @@ class F1Selector(tk.Tk):
         except Exception as e:
             self.update_progress(f"Error: {str(e)[:50]}...", error=True)
 
-    def update_progress(self, message, error=False):
+    def update_progress(self, message, error=False, progress=None):
         def _update():
+            self.progress_var.set(f"{message}{' (' + str(progress) + '%)' if progress is not None else ''}")
+            if progress is not None:
+                self.progress_bar['value'] = progress
             if error:
-                self.progress_bar.stop()
                 self.progress_label.config(fg="red")
-            self.progress_var.set(message)
         self.after(0, _update)
 
     def finish_loading(self, telemetry, session):
