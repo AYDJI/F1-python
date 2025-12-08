@@ -1,0 +1,65 @@
+# Byte-compiled / optimized / compiled files
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+dist/
+eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.coverage
+.tox/
+.pytest_cache/
+htmlcov/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store # macOS specific
+
+# OS-specific files
+Thumbs.db # Windows specific
+
+# Jupyter Notebook files
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+.flaskenv
+
+# Ruff stuff
+.ruff_cache/
+
+# Marimo
+marimo/_static/
+marimo/_lsp/
+__marimo__/
+
+# Streamlit
+.streamlit/secrets.toml
+
+#fastf1 cache
+./ff1_cache
+/ff1_cache
