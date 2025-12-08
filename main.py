@@ -249,6 +249,17 @@ def run_viewer(telemetry: pd.DataFrame, session):
     telemetry['xn'] = nx
     telemetry['yn'] = ny
 
+    # Draw track outline using first driver's telemetry points
+    track_color = (220, 220, 220)  # white-ish
+    if drivers:
+        track_driver = drivers[0]
+        track_telem = telemetry[telemetry['driver'] == track_driver].sort_values('time')
+        track_xn = track_telem['xn'].values
+        track_yn = track_telem['yn'].values
+    else:
+        track_xn = np.array([])
+        track_yn = np.array([])
+
     # global times array for bounds
     times = np.sort(telemetry['time'].unique())
     if times.size == 0:
@@ -326,6 +337,11 @@ def run_viewer(telemetry: pd.DataFrame, session):
             pygame.draw.line(screen, (28, 28, 28), (gx, 0), (gx, SCREEN_H))
         for gy in range(0, SCREEN_H, 200):
             pygame.draw.line(screen, (28, 28, 28), (0, gy), (MAIN_W, gy))
+
+        # draw track line
+        track_color = (220, 220, 220)  # white-ish
+        for i in range(1, len(track_xn)):
+            pygame.draw.line(screen, track_color, (track_xn[i-1], track_yn[i-1]), (track_xn[i], track_yn[i]))
 
         # Build driver snapshot fast using numpy searchsorted (cheap)
         driver_stats = {}
