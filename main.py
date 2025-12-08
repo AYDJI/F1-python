@@ -244,6 +244,8 @@ def run_viewer(telemetry: pd.DataFrame, session):
         else:
             driver_positions[drv] = 99  # no laps, unknown position
 
+    total_laps = int(lap_df['LapNumber'].max()) if not lap_df.empty else 0
+
     # Precompute session info
     fastest_df = session.laps[session.laps['LapTime'].notna()].nsmallest(1, 'LapTime')
     if not fastest_df.empty:
@@ -400,7 +402,7 @@ def run_viewer(telemetry: pd.DataFrame, session):
                 'distance': dist,
                 'xn': xn,
                 'yn': yn,
-                'position': driver_positions.get(drv, 99)
+                'progress_score': progress_score
             }
 
         # Draw driver dots (always from driver_stats so we have positions even at t=0)
@@ -464,11 +466,18 @@ def run_viewer(telemetry: pd.DataFrame, session):
         title = font_big.render("Positions", True, (220, 220, 220))
         screen.blit(title, (sidebar_x + 10, 10))
 
-        # sort by race position (low to high), tie-break by name
-        sorted_drivers = sorted(
-            [(drv, info) for drv, info in driver_stats.items()],
-            key=lambda kv: (kv[1]['position'], kv[0])
-        )
+        # sort by current progress (higher first) or final positions if finished
+        if current_lap >= total_laps:
+            sorted_drivers = sorted(
+                [(drv, info) for drv, info in driver_stats.items()],
+                key=lambda x: driver_positions.get(x[0], 99)
+            )
+        else:
+            sorted_drivers = sorted(
+                [(drv, info) for drv, info in driver_stats.items()],
+                key=lambda x: x[1]['progress_score'],
+                reverse=True
+            )
 
         y_pos = 50
         if sorted_drivers:
