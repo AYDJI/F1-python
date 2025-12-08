@@ -22,7 +22,7 @@ A real-time F1 telemetry visualization tool built with Python, FastF1, and Pygam
 - `pygame` - Graphics and GUI
 - `numpy` - Numerical computations
 - `pandas` - Data manipulation
-- `tkinter` - Selection interface (usually included with Python)
+- `tkinter` - Selection interface
 
 ## Installation
 
