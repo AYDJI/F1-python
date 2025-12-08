@@ -42,9 +42,10 @@ except Exception:
 # ---------------------------
 # Configuration
 # ---------------------------
-MAIN_W = 1000
+MAIN_W = 600
+INFO_W = 300
 SIDEBAR_W = 240
-SCREEN_W = MAIN_W + SIDEBAR_W
+SCREEN_W = MAIN_W + INFO_W + SIDEBAR_W
 SCREEN_H = 800
 FPS = 60
 DEFAULT_POINT_SIZE = 6
@@ -243,6 +244,30 @@ def run_viewer(telemetry: pd.DataFrame, session):
         else:
             driver_positions[drv] = 99  # no laps, unknown position
 
+    # Precompute session info
+    fastest_df = session.laps[session.laps['LapTime'].notna()].nsmallest(1, 'LapTime')
+    if not fastest_df.empty:
+        fastest_driver = fastest_df.iloc[0]['Driver']
+        fastest_time = fastest_df.iloc[0]['LapTime'].total_seconds()
+        fastest_str = f"{fastest_driver} {fmt_time(fastest_time)}"
+    else:
+        fastest_str = "N/A"
+
+    # Times arrays for timing
+    global_min = float(telemetry['time'].min()) if not telemetry.empty else 0.0
+    def convert_to_seconds(t):
+        if hasattr(t, 'total_seconds'):
+            return t.total_seconds()
+        elif hasattr(t, 'timestamp'):
+            return t.timestamp()
+        else:
+            return float(t)
+
+    status_times = np.array([convert_to_seconds(t) for t in session.status_data['Time']]) - global_min if hasattr(session, 'status_data') and not session.status_data.empty else np.array([])
+    status_codes = session.status_data['Status'].values if hasattr(session, 'status_data') and not session.status_data.empty else np.array([])
+    message_times = np.array([convert_to_seconds(t) for t in session.race_control_messages['Time']]) - global_min if hasattr(session, 'race_control_messages') and not session.race_control_messages.empty else np.array([])
+    messages = session.race_control_messages['Message'].values if hasattr(session, 'race_control_messages') and not session.race_control_messages.empty else np.array([])
+
     # Normalize coords to screen space once
     nx, ny = normalize_coords(telemetry['x'].values, telemetry['y'].values, MAIN_W, SCREEN_H)
     telemetry = telemetry.copy()
@@ -401,10 +426,43 @@ def run_viewer(telemetry: pd.DataFrame, session):
         frac = (sim_time - float(times[0])) / (float(times[-1]) - float(times[0])) if float(times[-1]) > float(times[0]) else 0.0
         pygame.draw.rect(screen, (200, 80, 80), (bx, by, int(bar_w * frac), bh))
 
+        # Compute session info for current time
+        current_mask = telemetry['time'] <= sim_time
+        if current_mask.any():
+            current_lap = int(telemetry.loc[current_mask, 'lap'].max())
+        else:
+            current_lap = 0
+        current_status_idx = np.searchsorted(status_times, sim_time, side='right') - 1
+        current_status = status_codes[current_status_idx] if current_status_idx >= 0 and current_status_idx < len(status_codes) else '1'
+        safety_str = "Safety Car Deployed" if current_status == '7' else "Green Flag"
+        message_idx = np.searchsorted(message_times, sim_time, side='right') - 1
+        last_msg = str(messages[message_idx]) if message_idx >= 0 and message_idx < len(messages) else ""
+        if len(last_msg) > 40:
+            last_msg = last_msg[:37] + "..."
+
+        # Info panel
+        info_x = MAIN_W
+        pygame.draw.rect(screen, (32, 28, 28), (info_x, 0, INFO_W, SCREEN_H))
+        title_info = font_big.render("Session Info", True, (220, 220, 220))
+        screen.blit(title_info, (info_x + 10, 10))
+        y_pos_info = 50
+        lap_render = font_small.render(f"Lap Count: {current_lap}", True, (230, 230, 230))
+        screen.blit(lap_render, (info_x + 10, y_pos_info))
+        y_pos_info += 24
+        fast_render = font_small.render(f"Fastest Lap: {fastest_str}", True, (230, 230, 230))
+        screen.blit(fast_render, (info_x + 10, y_pos_info))
+        y_pos_info += 24
+        safety_render = font_small.render(f"Safety Car: {safety_str}", True, (230, 230, 230))
+        screen.blit(safety_render, (info_x + 10, y_pos_info))
+        y_pos_info += 24
+        msg_render = font_small.render(f"Race Control: {last_msg}", True, (200, 230, 200))
+        screen.blit(msg_render, (info_x + 10, y_pos_info))
+
         # Sidebar & leaderboard
-        pygame.draw.rect(screen, (28, 28, 32), (MAIN_W, 0, SIDEBAR_W, SCREEN_H))
+        sidebar_x = MAIN_W + INFO_W
+        pygame.draw.rect(screen, (28, 28, 32), (sidebar_x, 0, SIDEBAR_W, SCREEN_H))
         title = font_big.render("Positions", True, (220, 220, 220))
-        screen.blit(title, (MAIN_W + 10, 10))
+        screen.blit(title, (sidebar_x + 10, 10))
 
         # sort by race position (low to high), tie-break by name
         sorted_drivers = sorted(
@@ -445,13 +503,13 @@ def run_viewer(telemetry: pd.DataFrame, session):
                     gap_str = f" +{lap_diff} laps"
 
             text = font_small.render(f"{pos}. {drv} {time_str}{gap_str}", True, (230, 230, 230))
-            screen.blit(text, (MAIN_W + 10, y_pos))
+            screen.blit(text, (sidebar_x + 10, y_pos))
             y_pos += 24
 
         # drivers with no telemetry at all -> DNF (bottom)
         for drv in [d for d in drivers if d not in driver_stats]:
             text = font_small.render(f"-. {drv} DNF", True, (230, 120, 120))
-            screen.blit(text, (MAIN_W + 10, y_pos))
+            screen.blit(text, (sidebar_x + 10, y_pos))
             y_pos += 24
 
         pygame.display.flip()
@@ -532,7 +590,7 @@ class F1Selector(tk.Tk):
         print(f"Loading session: {year} {name} {sess}...")
         try:
             session = ff1.get_session(year, rnd, sess)
-            session.load(telemetry=True, weather=False)
+            session.load(telemetry=True, weather=False, messages=True)
         except Exception as e:
             print("Failed to load session:", e)
             return
