@@ -15,6 +15,7 @@ import os
 import hashlib
 import time
 import datetime
+import threading
 
 import numpy as np
 import pandas as pd
@@ -590,26 +591,65 @@ class F1Selector(tk.Tk):
         year = int(self.year_var.get())
         sess = self.session_var.get()
 
-        self.destroy()
+        # Create loading progress window
+        self.loading_window = tk.Toplevel(self)
+        self.loading_window.title("Loading F1 Telemetry")
+        self.loading_window.geometry("400x150")
+        self.loading_window.transient(self)
 
-        cache = "ff1_cache"
-        os.makedirs(cache, exist_ok=True)
-        ff1.Cache.enable_cache(cache)
+        tk.Label(self.loading_window, text="Loading session data...", font=("Arial", 12)).pack(pady=10)
+        self.progress_var = tk.StringVar(value="Initializing...")
+        self.progress_label = tk.Label(self.loading_window, textvariable=self.progress_var, font=("Arial", 10))
+        self.progress_label.pack()
+        self.progress_bar = ttk.Progressbar(self.loading_window, mode="indeterminate", length=300)
+        self.progress_bar.pack(pady=10)
+        self.progress_bar.start()
 
-        print(f"Loading session: {year} {name} {sess}...")
+        # Make loading window modal
+        self.loading_window.grab_set()
+        self.loading_window.focus_set()
+
+        # Start loading in background thread
+        self.loading_thread = threading.Thread(target=self.load_data, args=(name, rnd, year, sess))
+        self.loading_thread.start()
+
+    def load_data(self, name, rnd, year, sess):
         try:
+            self.update_progress("Setting up cache...")
+            cache = "ff1_cache"
+            os.makedirs(cache, exist_ok=True)
+            ff1.Cache.enable_cache(cache)
+
+            self.update_progress(f"Loading session: {year} {name} {sess}...")
             session = ff1.get_session(year, rnd, sess)
+
+            self.update_progress("Loading telemetry data...")
             session.load(telemetry=True, weather=False, messages=True)
+
+            self.update_progress("Processing telemetry...")
+            telemetry = collect_session_telemetry(session)
+
+            if telemetry is None:
+                self.update_progress("No telemetry data found", error=True)
+                return
+
+            # Close loading window and destroy main window in main thread
+            self.after(100, lambda: self.finish_loading(telemetry, session))
+
         except Exception as e:
-            print("Failed to load session:", e)
-            return
+            self.update_progress(f"Error: {str(e)[:50]}...", error=True)
 
-        print("Collecting telemetry data, this may take a minute for race sessions...")
-        telemetry = collect_session_telemetry(session)
-        if telemetry is None:
-            print("No telemetry found")
-            return
+    def update_progress(self, message, error=False):
+        def _update():
+            if error:
+                self.progress_bar.stop()
+                self.progress_label.config(fg="red")
+            self.progress_var.set(message)
+        self.after(0, _update)
 
+    def finish_loading(self, telemetry, session):
+        self.loading_window.destroy()
+        self.destroy()
         run_viewer(telemetry, session)
 
 
