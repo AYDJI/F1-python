@@ -124,14 +124,36 @@ def normalize_coords(xs: np.ndarray, ys: np.ndarray, avail_w: int, avail_h: int,
     return nx.astype(int), ny.astype(int)
 
 
+def to_epoch_seconds(seq):
+    """
+    Convert an iterable of possible datetime/timedelta/float-like objects to POSIX seconds (float).
+    Falls back gracefully for timedeltas or floats.
+    """
+    res = []
+    for t in seq:
+        try:
+            # Works for pd.Timestamp, np.datetime64, datetime.datetime
+            res.append(float(pd.Timestamp(t).timestamp()))
+        except Exception:
+            try:
+                # For Timedelta-like objects
+                if hasattr(t, "total_seconds"):
+                    res.append(float(t.total_seconds()))
+                else:
+                    res.append(float(t))
+            except Exception:
+                res.append(np.nan)
+    return np.array(res, dtype=float)
+
+
 # ---------------------------
-# Telemetry collection (per-lap) - returns DataFrame with lap & distance
+# Telemetry collection (per-lap) - returns DataFrame with lap, distance, and optional abs_time
 # ---------------------------
 def collect_session_telemetry(session):
     """
     Iterate laps for every driver, collect X/Y and time arrays
     and return a concatenated DataFrame with columns:
-      ['driver', 'time', 'x', 'y', 'lap', 'distance']
+      ['driver', 'time', 'x', 'y', 'lap', 'distance', 'abs_time' (optional)]
     """
     laps = session.laps
     if laps is None or laps.empty:
@@ -180,6 +202,27 @@ def collect_session_telemetry(session):
                 lap_start = ts.min() if len(ts) > 0 else 0.0
                 dists = (ts - lap_start).astype(float)
 
+            # Absolute time: attempt to compute POSIX seconds if telemetry contains an absolute 'Time'
+            abs_times = None
+            if 'Time' in tel.columns:
+                abs_list = []
+                for t in tel.loc[mask, 'Time']:
+                    try:
+                        # Try interpreting as absolute timestamp
+                        abs_list.append(float(pd.Timestamp(t).timestamp()))
+                    except Exception:
+                        try:
+                            # If it's a timedelta, use total_seconds
+                            if hasattr(t, 'total_seconds'):
+                                abs_list.append(float(t.total_seconds()))
+                            else:
+                                abs_list.append(float(t))
+                        except Exception:
+                            abs_list.append(np.nan)
+                # If we have at least one non-NaN absolute time, keep the array
+                if not all(np.isnan(abs_list)):
+                    abs_times = np.array(abs_list, dtype=float)
+
             df = pd.DataFrame({
                 'driver': [drv] * len(ts),
                 'time': ts,
@@ -188,6 +231,14 @@ def collect_session_telemetry(session):
                 'lap': [lap_num] * len(ts),
                 'distance': dists
             })
+            if abs_times is not None:
+                # align length — it should match mask
+                if len(abs_times) == len(df):
+                    df['abs_time'] = abs_times
+                else:
+                    # safe fallback: drop abs_times if lengths mismatch
+                    df['abs_time'] = np.nan
+
             rows.append(df)
 
     if not rows:
@@ -243,20 +294,42 @@ def run_viewer(telemetry: pd.DataFrame, session):
     else:
         fastest_str = "N/A"
 
-    # Times arrays for timing
-    global_min = float(telemetry['time'].min()) if not telemetry.empty else 0.0
-    def convert_to_seconds(t):
-        if hasattr(t, 'total_seconds'):
-            return t.total_seconds()
-        elif hasattr(t, 'timestamp'):
-            return t.timestamp()
-        else:
-            return float(t)
+    # Helper: convert arrays of status/message times into epoch seconds and align to telemetry if possible
+    telemetry_has_abs = 'abs_time' in telemetry.columns and telemetry['abs_time'].notna().any()
+    telemetry_abs_min = float(telemetry['abs_time'].min()) if telemetry_has_abs else None
 
-    status_times = np.array([convert_to_seconds(t) for t in session.status_data['Time']]) - global_min if hasattr(session, 'status_data') and not session.status_data.empty else np.array([])
-    status_codes = session.status_data['Status'].values if hasattr(session, 'status_data') and not session.status_data.empty else np.array([])
-    message_times = np.array([convert_to_seconds(t) for t in session.race_control_messages['Time']]) - global_min if hasattr(session, 'race_control_messages') and not session.race_control_messages.empty else np.array([])
-    messages = session.race_control_messages['Message'].values if hasattr(session, 'race_control_messages') and not session.race_control_messages.empty else np.array([])
+    # Convert status_data times -> relative seconds in telemetry timebase (preferred) or session-relative fallback
+    if hasattr(session, 'status_data') and not session.status_data.empty:
+        sd_times = session.status_data['Time'].values
+        sd_epoch = to_epoch_seconds(sd_times)
+        if telemetry_has_abs:
+            status_times = sd_epoch - telemetry_abs_min
+        else:
+            # fallback: make status times relative to first status timestamp
+            if np.all(np.isnan(sd_epoch)):
+                status_times = np.array([])
+            else:
+                status_times = sd_epoch - sd_epoch[0]
+        status_codes = session.status_data['Status'].values
+    else:
+        status_times = np.array([])
+        status_codes = np.array([])
+
+    # Convert race_control_messages similarly
+    if hasattr(session, 'race_control_messages') and not session.race_control_messages.empty:
+        rm_times = session.race_control_messages['Time'].values
+        rm_epoch = to_epoch_seconds(rm_times)
+        if telemetry_has_abs:
+            message_times = rm_epoch - telemetry_abs_min
+        else:
+            if np.all(np.isnan(rm_epoch)):
+                message_times = np.array([])
+            else:
+                message_times = rm_epoch - rm_epoch[0]
+        messages = session.race_control_messages['Message'].values
+    else:
+        message_times = np.array([])
+        messages = np.array([])
 
     # Normalize coords to screen space once
     nx, ny = normalize_coords(telemetry['x'].values, telemetry['y'].values, MAIN_W, SCREEN_H)
@@ -422,22 +495,28 @@ def run_viewer(telemetry: pd.DataFrame, session):
             current_lap = int(telemetry.loc[current_mask, 'lap'].max())
         else:
             current_lap = 0
+
+        # Determine current status index using the aligned status_times
         current_status_idx = np.searchsorted(status_times, sim_time, side='right') - 1
         current_status = status_codes[current_status_idx] if current_status_idx >= 0 and current_status_idx < len(status_codes) else '1'
-        if current_status == '3':
+        current_status = str(current_status)
+
+        if current_status == '3' or current_status == '3.0':
             safety_str = "Safety Car Deployed"
-        elif current_status == '7':
+        elif current_status == '7' or current_status == '7.0':
             safety_str = "VSC Deployed"
-        elif current_status == '2':
+        elif current_status == '2' or current_status == '2.0':
             safety_str = "Safety Car Reported"
-        elif current_status == '5':
+        elif current_status == '5' or current_status == '5.0':
             safety_str = "Yellow Flag"
-        elif current_status == '4':
+        elif current_status == '4' or current_status == '4.0':
             safety_str = "Red Flag"
-        elif current_status == '6' or current_status == '8':
+        elif current_status == '6' or current_status == '6.0' or current_status == '8' or current_status == '8.0':
             safety_str = "Safety Car Ending"
         else:
             safety_str = "Green Flag"
+
+        # Race control last message (aligned)
         message_idx = np.searchsorted(message_times, sim_time, side='right') - 1
         last_msg = str(messages[message_idx]) if message_idx >= 0 and message_idx < len(messages) else ""
         if len(last_msg) > 40:
@@ -636,7 +715,7 @@ class F1Selector(tk.Tk):
             self.after(100, lambda: self.finish_loading(telemetry, session))
 
         except Exception as e:
-            self.update_progress(f"Error: {str(e)[:50]}...", error=True)
+            self.update_progress(f"Error: {str(e)[:200]}...", error=True)
 
     def update_progress(self, message, error=False, progress=None):
         def _update():
