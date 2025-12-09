@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""
-main.py - Simple F1 telemetry viewer using fastf1 + pygame
-
-This version fixes:
- - leaderboard correctness at start & finish
- - performance: removes heavy per-frame DataFrame ops (no more 1 FPS)
- - simulation time driven by real wall-clock time for smooth playback
-
-Usage:
-    python main.py
-"""
-
 import os
 import hashlib
 import time
