@@ -11,6 +11,24 @@ A real-time F1 telemetry visualization tool built with Python, FastF1, and Pygam
 - **Final Race Results**: Automatically displays official final positions from FastF1 data once the race is complete
 - **Interactive Controls**: Play/pause, speed control, scrubbing, point size adjustment, label toggling
 
+## Project Structure
+
+```
+F1-python/
+├── main.py          # Entry point for the application
+├── src/
+│   ├── config.py    # Configuration variables (screen dimensions, FPS, etc.)
+│   ├── helpers.py   # Utility functions (time formatting, color generation, coordinate normalization)
+│   ├── telemetry.py # Functions for collecting and processing F1 telemetry data
+│   ├── viewer.py    # Pygame-based telemetry viewer and playback engine
+│   └── selector.py  # Tkinter GUI for selecting F1 sessions
+├── requirements.txt # Python dependencies
+├── README.md        # This file
+└── .gitignore       # Git ignore rules
+```
+
+The codebase is organized into a `src/` directory for better modularity and maintainability.
+
 ## Requirements
 
 ### System Requirements
@@ -37,10 +55,9 @@ pip install fastf1 pygame numpy pandas
 Note: tkinter is typically included with Python installations.
 
 ### Installing from requirements file
-If using the provided requirements file (note: it's named `rqueirments.txt` in the repository due to a typo):
 
 ```bash
-pip install -r rqueirments.txt
+pip install -r requirements.txt
 ```
 
 ## Usage
